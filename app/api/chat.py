@@ -521,13 +521,25 @@ def _create_standard_stream_generator(
                     authoritative_final_source_type = str(item.get("source_type", "") or "")
                 continue
 
-            # Standard 模式：处理 thinking（使用前端定义的 thinking_chunk 类型）
+            # Standard 模式：处理 thinking
             if item_type == "thinking":
                 thinking_text = item.get("text", "")
                 if thinking_text:
                     streamed_thinking_accumulator += thinking_text
-                    # 输出 thinking_chunk 事件
-                    yield f"data: {json.dumps({'type': 'thinking_chunk', 'text': thinking_text}, ensure_ascii=False)}\n\n"
+                    if not assistant_started:
+                        assistant_started = True
+                        yield _build_stream_chunk(
+                            response_id,
+                            model_name,
+                            role="assistant",
+                            thinking=thinking_text,
+                        )
+                    else:
+                        yield _build_stream_chunk(
+                            response_id,
+                            model_name,
+                            thinking=thinking_text,
+                        )
                 continue
 
             # Standard 模式：处理 search（收集起来，最后输出）

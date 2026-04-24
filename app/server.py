@@ -1,5 +1,6 @@
 import time
 import os
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +14,38 @@ from app.api.chat import router as chat_router
 from app.api.models import router as models_router
 from app.logger import logger
 from app.limiter import limiter
+from app.model_registry import update_dynamic_models
+from app.notion_client import NotionOpusAPI
+
+async def periodic_model_update(app: FastAPI):
+    """
+    每 3 小时从 Notion 获取一次最新模型列表。
+    """
+    while True:
+        try:
+            # 使用账号池中的第一个可用账号
+            pool = app.state.account_pool
+            # get_client 不需要显式 release，它是从内部 clients 列表返回引用
+            client = pool.get_client()
+            if client:
+                models = client.fetch_available_models()
+                if models:
+                    update_dynamic_models(models)
+                    logger.info("Successfully refreshed model list from Notion AI")
+        except Exception as e:
+            logger.error(f"Error in periodic model update: {e}")
+        
+        # 每 3 小时更新一次
+        await asyncio.sleep(3 * 3600)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时初始化状态
     app.state.account_pool = AccountPool(ACCOUNTS)
+
+    # 启动后台模型更新任务
+    update_task = asyncio.create_task(periodic_model_update(app))
+    app.state.model_update_task = update_task
 
     # 确定运行模式
     if is_lite_mode():
@@ -34,7 +62,14 @@ async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
     yield
     # 关闭时清理
+    if hasattr(app.state, "model_update_task"):
+        app.state.model_update_task.cancel()
+        try:
+            await app.state.model_update_task
+        except asyncio.CancelledError:
+            pass
     logger.info("Service shutting down", extra={"request_info": {"event": "shutdown"}})
+
 
 app = FastAPI(
     title="Notion Opus API",

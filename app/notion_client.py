@@ -47,6 +47,43 @@ class NotionOpusAPI:
         self.url = "https://www.notion.so/api/v3/runInferenceTranscript"
         self.delete_url = "https://www.notion.so/api/v3/saveTransactions"
         self.account_key = self.user_email or self.user_id or "unknown-account"
+        self.models_url = "https://www.notion.so/api/v3/getAvailableModels"
+
+    def fetch_available_models(self) -> list[dict[str, Any]]:
+        """
+        从 Notion API 获取当前所有可用的 AI 模型列表。
+        """
+        cookies = {
+            "token_v2": self.token_v2,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-notion-active-user-header": self.user_id,
+            "x-notion-space-id": self.space_id,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "Origin": "https://www.notion.so",
+            "Referer": "https://www.notion.so/ai",
+        }
+        payload = {
+            "spaceId": self.space_id
+        }
+        try:
+            scraper = cloudscraper.create_scraper()
+            resp = scraper.post(self.models_url, cookies=cookies, headers=headers, json=payload, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("models", [])
+            else:
+                logger.warning(f"Failed to fetch models from Notion: HTTP {resp.status_code}")
+                # 记录详细错误信息以便排查
+                try:
+                    error_detail = resp.text[:200]
+                    logger.debug(f"Error response: {error_detail}")
+                except:
+                    pass
+        except Exception as e:
+            logger.error(f"Error fetching models from Notion: {e}", exc_info=True)
+        return []
 
     def _to_notion_transcript(self, transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
         converted: list[dict[str, Any]] = []

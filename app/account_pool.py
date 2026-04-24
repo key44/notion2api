@@ -26,30 +26,39 @@ class AccountPool:
         """
         轮询（Round-Robin）返回下一个可用客户端。
         过滤掉正处于冷却期中的客户端。
-        若所有客户端均不可用，将抛出异常。
+        若所有客户端均不可用，将自动等待直到有账号可用。
         """
-        now = time.time()
-        with self._lock:
-            start_index = self._current_index
+        while True:
+            now = time.time()
+            wait_seconds = 0
             
-            while True:
-                idx = self._current_index
-                # 如果过了冷却时间，视为可用
-                if self.cooldown_until[idx] <= now:
-                    # 轮询步进
-                    self._current_index = (self._current_index + 1) % len(self.clients)
-                    return self.clients[idx]
-                    
-                # 不可用则顺延
-                self._current_index = (self._current_index + 1) % len(self.clients)
+            with self._lock:
+                start_index = self._current_index
                 
-                # 如果转了一圈都没找到可用的
-                if self._current_index == start_index:
-                    next_available = min(self.cooldown_until)
-                    wait_seconds = max(1, int(next_available - now))
-                    raise RuntimeError(
-                        f"Notion 账号限流中（触发官方公平使用政策），请在 {wait_seconds} 秒后重试。"
-                    )
+                while True:
+                    idx = self._current_index
+                    # 如果过了冷却时间，视为可用
+                    if self.cooldown_until[idx] <= now:
+                        # 轮询步进
+                        self._current_index = (self._current_index + 1) % len(self.clients)
+                        return self.clients[idx]
+                        
+                    # 不可用则顺延
+                    self._current_index = (self._current_index + 1) % len(self.clients)
+                    
+                    # 如果转了一圈都没找到可用的
+                    if self._current_index == start_index:
+                        next_available = min(self.cooldown_until)
+                        wait_seconds = max(0.5, next_available - now)
+                        break
+            
+            # 如果需要等待，在锁外进行，避免阻塞其他线程检查状态
+            if wait_seconds > 0:
+                logger.info(
+                    f"All Notion accounts are in cooldown. Waiting {wait_seconds:.2f}s before retrying...",
+                    extra={"request_info": {"event": "account_pool_waiting", "duration": wait_seconds}}
+                )
+                time.sleep(wait_seconds)
 
     def get_status_summary(self) -> Dict[str, int]:
         """返回账号池简要状态，供健康检查和日志使用。"""

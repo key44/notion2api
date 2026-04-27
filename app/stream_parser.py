@@ -656,13 +656,13 @@ def _extract_final_content_from_record_map(data: dict[str, Any]) -> dict[str, An
     }
 
 
-def _classify_segment_type(effective_type: str) -> str:
+def _classify_segment_type(effective_type: str, parent_class: str | None = None) -> str:
     """
     根据 o:"a" patch 的 type 字段判断新段落的角色。
     这是整个分类逻辑的唯一入口——只依赖 Notion 自己标注的 type。
     """
     if not effective_type:
-        return SEG_CONTENT
+        return parent_class or SEG_CONTENT
     if effective_type == "text":
         return SEG_CONTENT
     if effective_type == "title":
@@ -672,7 +672,7 @@ def _classify_segment_type(effective_type: str) -> str:
     if any(kw in effective_type for kw in _TOOL_TYPES):
         return SEG_TOOL
     # 未知类型默认归正文，保证不丢内容
-    return SEG_CONTENT
+    return parent_class or SEG_CONTENT
 
 
 def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None, None]:
@@ -705,6 +705,10 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
             continue
         if isinstance(line, bytes):
             line = line.decode("utf-8", errors="ignore")
+            
+        with open("/app/data/ndjson.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
 
         # 调试日志：含搜索关键词的行
         lowered_line = line.lower()
@@ -731,6 +735,30 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
             cleaned = _clean_extracted_text(_extract_markdown_chat_text(data.get("value")))
             if cleaned:
                 yield {"type": "final_content", "text": cleaned, "source_type": "markdown-chat-event"}
+            continue
+
+        if data_type == "patch-start":
+            initial_segs = data.get("data", {}).get("s", [])
+            if isinstance(initial_segs, list):
+                next_seg_id = len(initial_segs)
+                for i, seg in enumerate(initial_segs):
+                    if not isinstance(seg, dict):
+                        continue
+                    seg_type = str(seg.get("type", "") or "").lower()
+                    seg_class = _classify_segment_type(seg_type)
+                    segment_types[i] = seg_class
+                    
+                    if "value" in seg:
+                        value_array = seg.get("value")
+                        if isinstance(value_array, list):
+                            for idx, item in enumerate(value_array):
+                                if isinstance(item, dict):
+                                    item_type = str(item.get("type", "") or "").lower()
+                                    item_class = _classify_segment_type(item_type, parent_class=seg_class)
+                                    value_types[(i, idx)] = item_class
+                                    next_val_id[i] = idx + 1
+                    if (i, 0) not in value_types:
+                        value_types[(i, 0)] = seg_class
             continue
 
         if data_type != "patch":
@@ -787,7 +815,7 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
                         for idx, item in enumerate(value_array):
                             if isinstance(item, dict):
                                 item_type = str(item.get("type", "") or "").lower()
-                                item_class = _classify_segment_type(item_type)
+                                item_class = _classify_segment_type(item_type, parent_class=seg_class)
                                 value_types[(seg_idx, idx)] = item_class
                                 next_val_id[seg_idx] = idx + 1
 
@@ -825,7 +853,8 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
                 if value_add_idx is not None:
                     vid = next_val_id.get(patch_seg, 0) if value_add_idx < 0 else value_add_idx
                     next_val_id[patch_seg] = max(next_val_id.get(patch_seg, 0), vid + 1)
-                    val_class = _classify_segment_type(effective_type)
+                    parent_class = segment_types.get(patch_seg)
+                    val_class = _classify_segment_type(effective_type, parent_class=parent_class)
                     value_types[(patch_seg, vid)] = val_class
                     patch_role = val_class
                     in_lang_tag[0] = False
@@ -843,7 +872,7 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
                                 "patch_path": patch_path,
                                 "value_add_idx": value_add_idx,
                                 "patch_v_type": type(patch_v).__name__,
-                                "registered_value_types": dict(value_types),
+                                "registered_value_types": str(value_types),
                             }
                         },
                     )
@@ -1016,7 +1045,17 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
                             }
                         },
                     )
-                    yield {"type": "thinking", "text": pure_thinking}
+                    if pure_thinking:
+                        yield {"type": "thinking", "text": pure_thinking}
+                    if overflow_content:
+                        yield {"type": "content", "text": overflow_content}
+                    
+                    # 永久更改此段落类型为 content，后续的所有追加内容都将归属为 content
+                    if patch_seg is not None:
+                        segment_types[patch_seg] = SEG_CONTENT
+                        current_val_idx = _extract_value_index(patch_path)
+                        if current_val_idx is not None:
+                            value_types[(patch_seg, current_val_idx)] = SEG_CONTENT
                 else:
                     logger.debug(
                         "Thinking segment processed without overflow detection",

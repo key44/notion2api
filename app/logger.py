@@ -28,7 +28,7 @@ def setup_logger(name="notion_opus"):
     
     # 防止重复添加 handler
     if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
         
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(JsonFormatter())

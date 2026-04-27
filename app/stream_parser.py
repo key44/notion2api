@@ -705,9 +705,6 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
             continue
         if isinstance(line, bytes):
             line = line.decode("utf-8", errors="ignore")
-            
-        with open("/app/data/ndjson.log", "a", encoding="utf-8") as f:
-            f.write(line + "\n")
 
 
         # 调试日志：含搜索关键词的行

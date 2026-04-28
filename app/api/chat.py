@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.conversation import compress_round_if_needed, compress_sliding_window_round, build_lite_transcript
-from app.config import is_lite_mode
+from app.config import is_lite_mode, AUTO_DELETE_THREAD
 from app.limiter import limiter
 from app.logger import logger
 from app.model_registry import is_supported_model, list_available_models
@@ -768,7 +768,7 @@ async def _handle_lite_request(
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
 
             # 自动清理 Notion UI 上的会话记录
-            if hasattr(client, "current_thread_id") and client.current_thread_id:
+            if AUTO_DELETE_THREAD and hasattr(client, "current_thread_id") and client.current_thread_id:
                 background_tasks.add_task(client.delete_thread, client.current_thread_id)
 
             # 流式响应
@@ -945,7 +945,7 @@ async def _handle_standard_request(
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
 
             # 自动清理 Notion UI 上的会话记录
-            if hasattr(client, "current_thread_id") and client.current_thread_id:
+            if AUTO_DELETE_THREAD and hasattr(client, "current_thread_id") and client.current_thread_id:
                 background_tasks.add_task(client.delete_thread, client.current_thread_id)
 
 

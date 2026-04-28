@@ -47,6 +47,9 @@ def is_standard_mode() -> bool:
     """Standard 模式：发送完整上下文，支持 thinking 和搜索输出"""
     return APP_MODE == "standard"
 
+# 是否自动清理 Notion UI 上的会话记录
+AUTO_DELETE_THREAD = os.getenv("NOTION_AUTO_DELETE_THREAD", "true").lower().strip() == "true"
+
 def get_default_account():
     """获取默认账号（列表中的第一个账号）"""
     return ACCOUNTS[0]

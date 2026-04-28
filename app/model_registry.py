@@ -120,6 +120,10 @@ def update_dynamic_models(models_list: list[dict[str, Any]]):
 
 
 def get_notion_model(model_name: str) -> str:
+    # If the input is already a known Notion internal model ID (a value in MODEL_MAP),
+    # return it as-is to prevent double-conversion fallback to the default model.
+    if model_name in NOTION_MODEL_REVERSE_MAP:
+        return model_name
     return MODEL_MAP.get(model_name, MODEL_MAP.get(DEFAULT_MODEL, "almond-croissant-low"))
 
 

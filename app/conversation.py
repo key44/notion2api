@@ -315,7 +315,7 @@ class ConversationManager:
                     "type": thread_type,
                     "model": model_name,
                     "modelFromUser": True,
-                    "useWebSearch": True,
+                    "useWebSearch": not model_name.startswith("gemini-3.1"),
                     "isCustomAgent": False,
                     "enableAgentAutomations": False,
                     "enableAgentIntegrations": False,
@@ -1906,96 +1906,173 @@ def build_standard_transcript(
     account: dict
 ) -> list[dict[str, Any]]:
     """
-    构建 Standard 模式的 transcript（完整上下文）
+    Standard モードの transcript を構築（完整上下文）
 
     Args:
-        messages: OpenAI 格式的 messages 数组（完整历史）
-        model_name: 模型名称
-        account: 账号信息字典，包含 user_id, space_id 等
+        messages: OpenAI 格式の messages 配列（完整歴史）
+        model_name: モデル名
+        account: アカウント情報辞書（user_id, space_id 等）
 
     Returns:
-        Notion transcript 数组
-
-    参考：notion-2api 项目的实现
+        Notion transcript 配列
     """
-    from app.model_registry import get_notion_model, get_thread_type
+    from app.model_registry import get_notion_model, get_thread_type, is_gemini_model
     import uuid
     from datetime import datetime
+
     notion_model = get_notion_model(model_name)
     thread_type = get_thread_type(model_name)
+    gemini_mode = is_gemini_model(model_name)
 
-    # 基础 transcript：config + context
-    transcript = [
+    # Geminiモードかどうかで config を分岐（_build_config_block と同等のフィールドを含む）
+    if gemini_mode:
+        config_value = {
+            "type": thread_type,
+            "model": notion_model,
+            "modelFromUser": True,
+            "useWebSearch": not model_name.startswith("gemini-3.1"),
+            "isCustomAgent": False,
+            "enableAgentAutomations": False,
+            "enableAgentIntegrations": False,
+            "enableBackgroundAgents": False,
+            "enableCodegenIntegration": False,
+            "enableCustomAgents": False,
+            "enableExperimentalIntegrations": False,
+            "enableLinkedDatabases": False,
+            "enableAgentViewVersionHistoryTool": False,
+            "enableDatabaseAgents": False,
+            "enableAgentComments": False,
+            "enableAgentForms": False,
+            "enableAgentMakesFormulas": False,
+            "enableUserSessionContext": False,
+            "searchScopes": [{"type": "everything"}],
+        }
+    else:
+        config_value = {
+            "type": thread_type,
+            "model": notion_model,
+            "modelFromUser": True,
+            "useWebSearch": True,
+            "useReadOnlyMode": False,
+            "writerMode": False,
+            "isCustomAgent": False,
+            "isCustomAgentBuilder": False,
+            "useCustomAgentDraft": False,
+            "use_draft_actor_pointer": False,
+            "enableAgentAutomations": True,
+            "enableAgentIntegrations": True,
+            "enableCustomAgents": True,
+            "enableAgentDiffs": True,
+            "enableAgentCreateDbTemplate": True,
+            "enableCsvAttachmentSupport": True,
+            "enableDatabaseAgents": False,
+            "enableAgentThreadTools": False,
+            "enableRunAgentTool": False,
+            "enableAgentDashboards": False,
+            "enableAgentCardCustomization": True,
+            "enableSystemPromptAsPage": False,
+            "enableUserSessionContext": False,
+            "enableCreateAndRunThread": True,
+            "enableAgentGenerateImage": False,
+            "enableSpeculativeSearch": False,
+            "enableUpdatePageV2Tool": True,
+            "enableUpdatePageAutofixer": True,
+            "enableUpdatePageMarkdownTree": False,
+            "enableUpdatePageOrderUpdates": True,
+            "enableAgentSupportPropertyReorder": True,
+            "enableAgentVerification": False,
+            "useServerUndo": True,
+            "databaseAgentConfigMode": False,
+            "isOnboardingAgent": False,
+            "availableConnectors": [],
+            "customConnectorNames": [],
+            "searchScopes": [{"type": "everything"}],
+            "useSearchToolV2": False,
+            "useRulePrioritization": False,
+            "enableExperimentalIntegrations": False,
+            "enableAgentViewNotificationsTool": False,
+            "enableScriptAgent": False,
+            "enableScriptAgentAdvanced": False,
+            "enableScriptAgentSlack": False,
+            "enableScriptAgentMcpServers": False,
+            "enableScriptAgentMail": False,
+            "enableScriptAgentCalendar": False,
+            "enableScriptAgentCustomAgentTools": False,
+            "enableScriptAgentSearchConnectorsInCustomAgent": False,
+            "enableScriptAgentGoogleDriveInCustomAgent": False,
+            "enableQueryCalendar": False,
+            "enableQueryMail": False,
+            "enableMailExplicitToolCalls": True,
+        }
+
+    # 基礎 transcript: config + context
+    # Gemini モデルは surface="ai_module"、それ以外は "workflows" が必要
+    surface = "ai_module" if gemini_mode else "workflows"
+    transcript: list[dict[str, Any]] = [
         {
             "id": str(uuid.uuid4()),
             "type": "config",
-            "value": {
-                "type": thread_type,
-                "model": notion_model,
-                "modelFromUser": True,
-                "useWebSearch": True,
-            }
+            "value": config_value,
         },
         {
             "id": str(uuid.uuid4()),
             "type": "context",
             "value": {
                 "timezone": "Asia/Shanghai",
-                "currentDatetime": datetime.now().astimezone().isoformat(),
+                "userName": account.get("user_name", "user"),
                 "userId": account.get("user_id", ""),
+                "userEmail": account.get("user_email", ""),
+                "spaceName": "Notion",
                 "spaceId": account.get("space_id", ""),
+                "spaceViewId": account.get("space_view_id", ""),
+                "currentDatetime": datetime.now().astimezone().isoformat(),
+                "surface": surface,
+                "agentName": account.get("user_name", "user"),
             }
         }
     ]
 
-    # 收集所有 system 消息
-    system_instructions = []
-    user_messages = []
+    # system メッセージを収集
+    system_instructions: list[str] = []
+    first_user_seen = False
 
+    # メッセージを元の順序で追加（user → assistant の交互順序を維持）
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content", "")
 
         if role == "system":
             system_instructions.append(content)
-        elif role == "user":
-            user_messages.append(content)
-        elif role == "assistant":
-            # assistant 消息单独处理
-            transcript.append({
-                "id": str(uuid.uuid4()),
-                "type": "agent-inference",
-                "value": [
-                    {
-                        "type": "text",
-                        "content": content
-                    }
-                ]
-            })
+            continue
 
-    # 将 system 指令合并到第一条 user 消息（与 Lite/Heavy 模式保持一致）
-    if user_messages:
-        first_user_content = user_messages[0]
-        if system_instructions:
-            merged_system = "\n".join(system_instructions)
-            first_user_content = f"[System Instructions: {merged_system}]\n\n{first_user_content}"
+        if role == "user":
+            user_content = content
+            # system instructions は最初の user メッセージにマージ
+            if not first_user_seen and system_instructions:
+                merged_system = "\n".join(system_instructions)
+                user_content = f"[System Instructions: {merged_system}]\n\n{user_content}"
+            first_user_seen = True
 
-        transcript.append({
-            "id": str(uuid.uuid4()),
-            "type": "user",
-            "value": [[first_user_content]],
-            "userId": account.get("user_id", ""),
-            "createdAt": datetime.now().astimezone().isoformat()
-        })
-
-        # 添加剩余的 user 消息
-        for content in user_messages[1:]:
             transcript.append({
                 "id": str(uuid.uuid4()),
                 "type": "user",
-                "value": [[content]],
+                "value": [[user_content]],
                 "userId": account.get("user_id", ""),
-                "createdAt": datetime.now().astimezone().isoformat()
             })
 
+        elif role == "assistant":
+            if gemini_mode:
+                transcript.append({
+                    "id": str(uuid.uuid4()),
+                    "type": "agent-inference",
+                    "value": [{"type": "text", "content": content}],
+                })
+            else:
+                transcript.append({
+                    "id": str(uuid.uuid4()),
+                    "type": "assistant",
+                    "value": [[content]],
+                })
+
     return transcript
+

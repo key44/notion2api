@@ -933,6 +933,9 @@ async def _handle_standard_request(
             account = {
                 "user_id": client.user_id,
                 "space_id": client.space_id,
+                "user_name": client.user_name,
+                "user_email": client.user_email,
+                "space_view_id": client.space_view_id,
             }
             messages = [msg.dict() for msg in req_body.messages]
             transcript = build_standard_transcript(messages, req_body.model, account)
@@ -1232,7 +1235,7 @@ async def create_chat_completion(
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
 
             # 自动清理 Notion UI 上的会话记录
-            if hasattr(client, "current_thread_id") and client.current_thread_id:
+            if AUTO_DELETE_THREAD and hasattr(client, "current_thread_id") and client.current_thread_id:
                 background_tasks.add_task(client.delete_thread, client.current_thread_id)
 
             def openai_stream_generator() -> Generator[str, None, None]:

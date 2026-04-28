@@ -541,7 +541,7 @@ class ConversationManager:
         for row in rows:
             grouped.setdefault(int(row["round_index"]), []).append(row)
 
-        role_map = {"user": "用户", "assistant": "AI", "system": "系统", "developer": "系统"}
+        role_map = {"user": "用户", "assistant": "AI", "system": "系统"}
         lines: List[str] = []
         for round_index in sorted(grouped.keys()):
             lines.append(f"[第 {round_index + 1} 轮]")
@@ -615,7 +615,7 @@ class ConversationManager:
         - No compression is triggered here.
         - next_round_index increments only when an assistant message follows a user message.
         """
-        if role not in {"user", "assistant", "system", "developer"}:
+        if role not in {"user", "assistant", "system"}:
             raise ValueError(f"Invalid role: {role}")
 
         with self._get_conn() as conn:
@@ -1956,7 +1956,7 @@ def build_standard_transcript(
         role = msg.get("role")
         content = msg.get("content", "")
 
-        if role in ("system", "developer"):
+        if role == "system":
             system_instructions.append(content)
         elif role == "user":
             user_messages.append(content)

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class ChatMessage(BaseModel):
     """单条对话消息"""
-    role: Literal["user", "assistant", "system", "developer"]
+    role: Literal["user", "assistant", "system"]
     content: str
     thinking: Optional[str] = None
 

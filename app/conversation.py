@@ -315,7 +315,7 @@ class ConversationManager:
                     "type": thread_type,
                     "model": model_name,
                     "modelFromUser": True,
-                    "useWebSearch": not model_name.startswith("gemini-3.1"),
+                    "useWebSearch": True,
                     "isCustomAgent": False,
                     "enableAgentAutomations": False,
                     "enableAgentIntegrations": False,

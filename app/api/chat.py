@@ -321,7 +321,7 @@ def _prepare_messages(req_body: ChatCompletionRequest) -> Tuple[str, List[Tuple[
     dialogue_messages = []
 
     for msg in req_body.messages:
-        if msg.role == "system":
+        if msg.role in ("system", "developer"):
             if msg.content.strip():
                 system_messages.append(msg.content.strip())
             continue
@@ -355,7 +355,7 @@ def _prepare_messages_lite(req_body: ChatCompletionRequest) -> str:
     user_prompt = ""
 
     for msg in req_body.messages:
-        if msg.role == "system" and msg.content.strip():
+        if msg.role in ("system", "developer") and msg.content.strip():
             system_messages.append(msg.content.strip())
         elif msg.role == "user":
             user_prompt = msg.content

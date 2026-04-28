@@ -98,6 +98,42 @@ def _strip_lang_tags(text: str, in_tag: list[bool]) -> str:
     return "".join(result)
 
 
+def _transform_citations(text: str, in_citation: list[bool]) -> str:
+    """Transform Notion internal [^https://...] citation markers into clickable [🔗](https://...) links."""
+    result = []
+    i = 0
+    while i < len(text):
+        if in_citation[0]:
+            # We are inside a [^... citation. Look for the closing ].
+            close_idx = text.find("]", i)
+            if close_idx == -1:
+                # Still inside, pass everything.
+                result.append(text[i:])
+                break
+            else:
+                # Found it! Close the markdown link.
+                result.append(text[i:close_idx])
+                result.append(")")
+                in_citation[0] = False
+                i = close_idx + 1
+                continue
+
+        # Look for [^
+        cite_start = text.find("[^", i)
+        if cite_start == -1:
+            result.append(text[i:])
+            break
+
+        # Found [^.
+        result.append(text[i:cite_start])
+        # Transform [^ to [🔗](
+        result.append("[🔗](")
+        in_citation[0] = True
+        i = cite_start + 2
+
+    return "".join(result)
+
+
 def _clean_notion_markup(text: str) -> str:
     """
     二次清理：移除 _strip_lang_tags 可能遗漏的 Notion 内部标记残片。
@@ -119,6 +155,8 @@ def _clean_notion_markup(text: str) -> str:
     text = _RE_PRIMARY_ATTR.sub("", text)
     # 移除行首的属性尾巴残片，如 -CN"> 或 "> 或 en">
     text = _RE_ATTR_TAIL.sub("", text)
+    # 转换 Notion 引号形式的引用，如 [^https://...] 转换为 [🔗](https://...)
+    text = re.sub(r'\[\^(https?://[^\]\s]+)\]', r'[🔗](\1)', text)
     return text
 
 
@@ -691,6 +729,8 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
     """
     in_lang_tag: list[bool] = [False]
     in_primary_attr: list[bool] = [False]
+    in_citation: list[bool] = [False]
+    pending_prefix = ""                         # 处理跨 patch 分割的标记（如 [^ 或 <lang）
     search_json_buffer = ""
     search_json_depth = 0
 
@@ -946,8 +986,25 @@ def parse_stream(response: requests.Response) -> Generator[dict[str, Any], None,
             if not content:
                 continue
 
+            # 处理跨 patch 分割的标记（[ 和 <）
+            if pending_prefix:
+                content = pending_prefix + content
+                pending_prefix = ""
+            
+            # 检查末尾是否以可能的标记开头结尾，如果是则缓存到下一轮
+            # 优先级：长的先匹配
+            for marker_start in ("</lang", "<lang", "[^", "<", "["):
+                if content.endswith(marker_start):
+                    pending_prefix = marker_start
+                    content = content[:-len(marker_start)]
+                    break
+            
+            if not content and not pending_prefix:
+                continue
+
             cleaned = _strip_lang_tags(content, in_lang_tag)
             cleaned = _strip_primary_attr_fragments(cleaned, in_primary_attr)
+            cleaned = _transform_citations(cleaned, in_citation)
             cleaned = _clean_notion_markup(cleaned)
             if not cleaned:
                 continue

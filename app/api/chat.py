@@ -733,6 +733,7 @@ async def _handle_lite_request(
     request: Request,
     req_body: ChatCompletionRequest,
     response: Response,
+    background_tasks: BackgroundTasks,
 ) -> JSONResponse | StreamingResponse:
     """处理 Lite 模式请求（无记忆，单轮问答）"""
     pool = request.app.state.account_pool
@@ -765,6 +766,10 @@ async def _handle_lite_request(
 
             if first_item is None:
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
+
+            # 自动清理 Notion UI 上的会话记录
+            if hasattr(client, "current_thread_id") and client.current_thread_id:
+                background_tasks.add_task(client.delete_thread, client.current_thread_id)
 
             # 流式响应
             if req_body.stream:
@@ -892,6 +897,7 @@ async def _handle_standard_request(
     request: Request,
     req_body: ChatCompletionRequest,
     response: Response,
+    background_tasks: BackgroundTasks,
 ) -> JSONResponse | StreamingResponse:
     """
     处理 Standard 模式请求（完整上下文，支持 thinking 和搜索）
@@ -931,12 +937,17 @@ async def _handle_standard_request(
             messages = [msg.dict() for msg in req_body.messages]
             transcript = build_standard_transcript(messages, req_body.model, account)
 
-            # 调用 Notion API（不使用 thread_id，让 Notion ��动处理）
+            # 调用 Notion API（不使用 thread_id，让 Notion 动处理）
             stream_gen = client.stream_response(transcript, thread_id=None)
             first_item = next(stream_gen, None)
 
             if first_item is None:
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
+
+            # 自动清理 Notion UI 上的会话记录
+            if hasattr(client, "current_thread_id") and client.current_thread_id:
+                background_tasks.add_task(client.delete_thread, client.current_thread_id)
+
 
             # 流式响应
             if req_body.stream:
@@ -1117,11 +1128,11 @@ async def create_chat_completion(
 
     # Lite 模式：单轮问答，无记忆
     if is_lite_mode():
-        return await _handle_lite_request(request, req_body, response)
+        return await _handle_lite_request(request, req_body, response, background_tasks)
 
     # Standard 模式：完整上下文，支持 thinking 和搜索
     if is_standard_mode():
-        return await _handle_standard_request(request, req_body, response)
+        return await _handle_standard_request(request, req_body, response, background_tasks)
 
     # Heavy 模式：完整会话管理
     pool = request.app.state.account_pool
@@ -1219,6 +1230,10 @@ async def create_chat_completion(
 
             if first_item is None:
                 raise NotionUpstreamError("Notion upstream returned empty content.", retriable=True)
+
+            # 自动清理 Notion UI 上的会话记录
+            if hasattr(client, "current_thread_id") and client.current_thread_id:
+                background_tasks.add_task(client.delete_thread, client.current_thread_id)
 
             def openai_stream_generator() -> Generator[str, None, None]:
                 streamed_content_accumulator = ""
